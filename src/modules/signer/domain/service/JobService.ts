@@ -1,44 +1,56 @@
-import Assinatura from '../models/Assinatura';
-import dropSignerService from './dropSignerService';
-import sequelize from '../config/database';
-import { createJobLogger, createAssinaturaLogger } from '../config/logger';
+import { AssinaturaModel } from '../model/Assinatura';
+import { IAssinaturaRepository } from '../../infrastructure/repository/AssinaturaRepository';
+import { IDropSignerService } from './DropSignerService';
+import { createJobLogger, createAssinaturaLogger } from '../../../config/logger';
+import sequelize from '../../../config/database';
 
-export class JobService {
+export interface IJobService {
+  executarJob(): Promise<void>;
+  iniciarJobAgendado(): void;
+}
+
+export class JobService implements IJobService {
+  constructor(
+    private assinaturaRepository: IAssinaturaRepository,
+    private dropSignerService: IDropSignerService
+  ) {}
+
   /**
    * Processa uma assinatura individual
    */
-  private async processarAssinatura(assinatura: Assinatura, jobLogger: any): Promise<void> {
-    const assinaturaLogger = createAssinaturaLogger(assinatura.ID, jobLogger.getTransactionId());
+  private async processarAssinatura(assinatura: AssinaturaModel, jobLogger: any): Promise<void> {
+    const assinaturaLogger = createAssinaturaLogger(assinatura.id, jobLogger.getTransactionId());
     
     try {
       assinaturaLogger.info('Iniciando processamento de assinatura', {
-        sloCerorId: assinatura.SLO_CEROR_ID,
-        nomeAssinante: assinatura.NOME_ASSINANTE,
-        emailAssinante: assinatura.EMAIL_ASSINANTE,
-        metodo: assinatura.METODO
+        sloCerorId: assinatura.sloCerorId,
+        nomeAssinante: assinatura.nomeAssinante,
+        emailAssinante: assinatura.emailAssinante,
+        metodo: assinatura.metodo
       });
 
       // Verifica se tem dados obrigatórios
-      if (!assinatura.NOME_ASSINANTE || !assinatura.IDENTIFICADOR || !assinatura.EMAIL_ASSINANTE) {
+      if (!assinatura.hasDadosAssinante()) {
         throw new Error('Dados do assinante incompletos');
       }
 
-      if (assinatura.METODO === 'CONTRAASSINAR') {
+      if (assinatura.isMetodoContraassinar()) {
         await this.processarContraassinatura(assinatura, assinaturaLogger);
-      } else if (assinatura.METODO === 'ASSINAR') {
+      } else if (assinatura.isMetodoAssinar()) {
         await this.processarAssinaturaNormal(assinatura, assinaturaLogger);
       } else {
-        throw new Error(`Método não suportado: ${assinatura.METODO}`);
+        throw new Error(`Método não suportado: ${assinatura.metodo}`);
       }
 
     } catch (error) {
       assinaturaLogger.error('Erro ao processar assinatura', error, {
-        sloCerorId: assinatura.SLO_CEROR_ID,
-        metodo: assinatura.METODO
+        sloCerorId: assinatura.sloCerorId,
+        metodo: assinatura.metodo
       });
       
       // Marca como processado mesmo com erro para evitar loop infinito
-      await assinatura.update({ PROCESSADO: 'S' });
+      assinatura.marcarComoProcessado();
+      await this.assinaturaRepository.update(assinatura);
       
       throw error;
     }
@@ -47,58 +59,53 @@ export class JobService {
   /**
    * Processa contraassinatura
    */
-  private async processarContraassinatura(assinatura: Assinatura, assinaturaLogger: any): Promise<void> {
+  private async processarContraassinatura(assinatura: AssinaturaModel, assinaturaLogger: any): Promise<void> {
     assinaturaLogger.info('Processando contraassinatura');
 
     // Busca o registro original com método ASSINAR e mesmo SLO_CEROR_ID
-    const assinaturaOriginal = await Assinatura.findOne({
-      where: {
-        SLO_CEROR_ID: assinatura.SLO_CEROR_ID,
-        METODO: 'ASSINAR',
-        ASSINADO_PORTAL: 'S'
-      }
-    });
+    const assinaturaOriginal = await this.assinaturaRepository.findBySloCerorId(
+      assinatura.sloCerorId, 
+      'ASSINAR'
+    );
 
     if (!assinaturaOriginal) {
       throw new Error('Assinatura original não encontrada para contraassinatura');
     }
 
-    if (assinaturaOriginal.ASSINADO_PORTAL !== 'S') {
+    if (!assinaturaOriginal.isAssinadoPortal()) {
       throw new Error('Documento original não foi assinado no portal');
     }
 
-    if (!assinaturaOriginal.DOCUMENT_ID) {
+    if (!assinaturaOriginal.hasDocumentId()) {
       throw new Error('Documento original não possui DOCUMENT_ID');
     }
 
     assinaturaLogger.info('Assinatura original encontrada', {
-      documentId: assinaturaOriginal.DOCUMENT_ID,
-      assinadoPortal: assinaturaOriginal.ASSINADO_PORTAL
+      documentId: assinaturaOriginal.documentId,
+      assinadoPortal: assinaturaOriginal.assinadoPortal
     });
 
     // Verifica se os dados do assinante não são null
-    if (!assinatura.NOME_ASSINANTE || !assinatura.IDENTIFICADOR || !assinatura.EMAIL_ASSINANTE) {
+    if (!assinatura.hasDadosAssinante()) {
       throw new Error('Dados do assinante incompletos para contraassinatura');
     }
 
     // Adiciona contraassinatura ao documento existente
-    const sucesso = await dropSignerService.addCounterSignature(
-      assinaturaOriginal.DOCUMENT_ID,
-      assinatura.NOME_ASSINANTE!,
-      assinatura.IDENTIFICADOR!,
-      assinatura.EMAIL_ASSINANTE!
+    const sucesso = await this.dropSignerService.addCounterSignature(
+      assinaturaOriginal.documentId!,
+      assinatura.nomeAssinante!,
+      assinatura.identificador!,
+      assinatura.emailAssinante!
     );
 
     if (sucesso) {
       // Atualiza o registro de contraassinatura
-      await assinatura.update({
-        PROCESSADO: 'S',
-        DOCUMENT_ID: assinaturaOriginal.DOCUMENT_ID,
-        DOCUMENT_DATA: new Date()
-      });
+      assinatura.marcarComoProcessado();
+      assinatura.setDocumentInfo(assinaturaOriginal.documentId!);
+      await this.assinaturaRepository.update(assinatura);
 
       assinaturaLogger.info('Contraassinatura processada com sucesso', {
-        documentId: assinaturaOriginal.DOCUMENT_ID
+        documentId: assinaturaOriginal.documentId
       });
     }
   }
@@ -106,46 +113,43 @@ export class JobService {
   /**
    * Processa assinatura normal (método ASSINAR)
    */
-  private async processarAssinaturaNormal(assinatura: Assinatura, assinaturaLogger: any): Promise<void> {
+  private async processarAssinaturaNormal(assinatura: AssinaturaModel, assinaturaLogger: any): Promise<void> {
     // Verifica se tem arquivo para processar
-    if (!assinatura.CEROR_ARQUIVO) {
+    if (!assinatura.hasArquivo()) {
       throw new Error('Arquivo BLOB não encontrado');
     }
 
     // Verifica se os dados do assinante não são null
-    if (!assinatura.NOME_ASSINANTE || !assinatura.IDENTIFICADOR || !assinatura.EMAIL_ASSINANTE) {
+    if (!assinatura.hasDadosAssinante()) {
       throw new Error('Dados do assinante incompletos para assinatura normal');
     }
 
     // Step 1: Upload do arquivo
     assinaturaLogger.info('Iniciando upload do arquivo para DropSigner');
-    const uploadResponse = await dropSignerService.uploadBytes(assinatura.CEROR_ARQUIVO);
+    const uploadResponse = await this.dropSignerService.uploadBytes(assinatura.cerorArquivo!);
     
     // Atualiza UPLOAD_ID e UPLOAD_DATA
-    await assinatura.update({ 
-      UPLOAD_ID: uploadResponse.id,
-      UPLOAD_DATA: new Date()
-    });
+    assinatura.setUploadInfo(uploadResponse.id);
+    await this.assinaturaRepository.update(assinatura);
+    
     assinaturaLogger.info('Upload concluído com sucesso', {
       uploadId: uploadResponse.id
     });
 
     // Step 2: Criar documento para assinatura
     assinaturaLogger.info('Criando documento para assinatura');
-    const documentResponse = await dropSignerService.createDocument(
+    const documentResponse = await this.dropSignerService.createDocument(
       uploadResponse.id,
-      assinatura.SLO_CEROR_ID,
-      assinatura.NOME_ASSINANTE,
-      assinatura.IDENTIFICADOR,
-      assinatura.EMAIL_ASSINANTE
+      assinatura.sloCerorId,
+      assinatura.nomeAssinante!,
+      assinatura.identificador!,
+      assinatura.emailAssinante!
     );
 
     // Atualiza DOCUMENT_ID, DOCUMENT_DATA e marca como processado
-    await assinatura.update({
-      DOCUMENT_ID: documentResponse.documentId,
-      DOCUMENT_DATA: new Date(),
-      PROCESSADO: 'S'
-    });
+    assinatura.setDocumentInfo(documentResponse.documentId);
+    assinatura.marcarComoProcessado();
+    await this.assinaturaRepository.update(assinatura);
 
     assinaturaLogger.info('Documento criado e assinatura processada com sucesso', {
       documentId: documentResponse.documentId,
@@ -174,14 +178,8 @@ export class JobService {
         jobLogger.info('Reconexão com banco de dados bem-sucedida');
       }
 
-      // Busca registros não processados com método ASSINAR ou CONTRAASSINAR
-      const assinaturas = await Assinatura.findAll({
-        where: {
-          PROCESSADO: 'N',
-          METODO: ['ASSINAR', 'CONTRAASSINAR']
-        },
-        order: [['ID', 'ASC']] // Processa em ordem sequencial
-      });
+      // Busca registros não processados
+      const assinaturas = await this.assinaturaRepository.findPendentes();
 
       if (assinaturas.length === 0) {
         jobLogger.info('Nenhuma assinatura pendente encontrada');
@@ -201,15 +199,18 @@ export class JobService {
           await this.processarAssinatura(assinatura, jobLogger);
           processadasComSucesso++;
           
-          // Pequena pausa entre processamentos
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
+          jobLogger.info('Assinatura processada com sucesso', {
+            id: assinatura.id,
+            sloCerorId: assinatura.sloCerorId,
+            metodo: assinatura.metodo
+          });
         } catch (error) {
           processadasComErro++;
-          jobLogger.error('Falha no processamento da assinatura', error, {
-            assinaturaId: assinatura.ID
+          jobLogger.error('Erro ao processar assinatura', error, {
+            id: assinatura.id,
+            sloCerorId: assinatura.sloCerorId,
+            metodo: assinatura.metodo
           });
-          // Continua com a próxima assinatura
         }
       }
 
@@ -220,7 +221,7 @@ export class JobService {
       });
 
     } catch (error) {
-      jobLogger.error('Erro crítico no job', error);
+      jobLogger.error('Erro crítico no job de assinaturas', error);
       throw error;
     }
   }
@@ -229,26 +230,29 @@ export class JobService {
    * Inicia o job agendado
    */
   iniciarJobAgendado(): void {
-    const intervaloMinutos = parseInt(process.env.JOB_INTERVAL_MINUTES || '2');
-    const jobLogger = createJobLogger('assinaturas-job-scheduler');
-    
+    const jobLogger = createJobLogger('job-agendado');
+    const intervalMinutes = parseInt(process.env.JOB_INTERVAL_MINUTES || '2');
+    const intervalMs = intervalMinutes * 60 * 1000;
+
     jobLogger.info('Iniciando job agendado', {
-      intervaloMinutos,
-      jobIntervalMs: intervaloMinutos * 60 * 1000
+      intervalMinutes,
+      intervalMs
     });
-    
+
     // Executa imediatamente na primeira vez
     this.executarJob().catch(error => {
-      jobLogger.error('Erro na execução inicial do job', error);
+      jobLogger.error('Erro na primeira execução do job agendado', error);
     });
 
     // Agenda execuções subsequentes
-    setInterval(() => {
-      this.executarJob().catch(error => {
+    setInterval(async () => {
+      try {
+        await this.executarJob();
+      } catch (error) {
         jobLogger.error('Erro na execução agendada do job', error);
-      });
-    }, intervaloMinutos * 60 * 1000);
-  }
-}
+      }
+    }, intervalMs);
 
-export default new JobService(); 
+    jobLogger.info('Job agendado configurado com sucesso');
+  }
+} 

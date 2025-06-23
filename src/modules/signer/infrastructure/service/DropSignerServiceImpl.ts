@@ -1,16 +1,17 @@
 import axios, { AxiosInstance } from 'axios';
 import dotenv from 'dotenv';
-import { createServiceLogger } from '../config/logger';
-import {
+import { createServiceLogger } from '../../../config/logger';
+import { 
+  IDropSignerService,
   UploadBytesRequest,
   UploadBytesResponse,
   CreateDocumentRequest,
   CreateDocumentResponse
-} from '../types/dropSigner';
+} from '../../domain/service/DropSignerService';
 
 dotenv.config();
 
-export class DropSignerService {
+export class DropSignerServiceImpl implements IDropSignerService {
   private api: AxiosInstance;
   private apiKey: string;
   private serviceLogger: any;
@@ -28,6 +29,10 @@ export class DropSignerService {
       timeout: 30000
     });
 
+    this.setupInterceptors();
+  }
+
+  private setupInterceptors(): void {
     // Interceptor para logs
     this.api.interceptors.request.use(
       (config) => {
@@ -69,9 +74,6 @@ export class DropSignerService {
     );
   }
 
-  /**
-   * Faz upload do arquivo BLOB como base64
-   */
   async uploadBytes(fileBuffer: Buffer): Promise<UploadBytesResponse> {
     const operationLogger = this.serviceLogger.child({ operation: 'uploadBytes' });
     
@@ -102,9 +104,6 @@ export class DropSignerService {
     }
   }
 
-  /**
-   * Cria documento para assinatura
-   */
   async createDocument(
     uploadId: string,
     sloCerorId: number,
@@ -174,9 +173,6 @@ export class DropSignerService {
     }
   }
 
-  /**
-   * Adiciona contraassinatura ao documento existente
-   */
   async addCounterSignature(
     documentId: string,
     nomeAssinante: string,
@@ -210,11 +206,10 @@ export class DropSignerService {
         ]
       };
 
-      const response = await this.api.post(`/api/documents/${documentId}/flow`, requestBody);
+      await this.api.patch(`/api/documents/${documentId}`, requestBody);
       
       operationLogger.info('Contraassinatura adicionada com sucesso', {
-        documentId,
-        nomeAssinante
+        documentId
       });
       
       return true;
@@ -226,6 +221,4 @@ export class DropSignerService {
       throw new Error(`Falha na adição da contraassinatura: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
     }
   }
-}
-
-export default new DropSignerService(); 
+} 

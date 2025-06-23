@@ -1,191 +1,83 @@
-# Signer Job
+# Arquitetura Signer - Camadas
 
-Job para processamento de assinaturas com DropSigner usando Node.js, Fastify, TypeScript e Sequelize com Oracle.
+Este diretório contém a implementação da arquitetura em camadas para o sistema de assinaturas.
 
-## 🚀 Funcionalidades
-
-- **Job Agendado**: Executa a cada 2 minutos (configurável)
-- **Integração Oracle**: Conexão com banco de dados Oracle via Sequelize
-- **API DropSigner**: Integração completa com a API de assinaturas
-- **Processamento Sequencial**: Evita sobrecarga no processamento
-- **Tratamento de Erros**: Logs detalhados e tratamento robusto
-- **API REST**: Endpoints para monitoramento e execução manual
-- **Swagger**: Documentação automática da API
-
-## 📋 Pré-requisitos
-
-- Node.js 18+
-- Oracle Database
-- Credenciais da API DropSigner
-
-## 🛠️ Instalação
-
-1. **Clone o repositório**
-```bash
-git clone <repository-url>
-cd signer-job
-```
-
-2. **Instale as dependências**
-```bash
-npm install
-```
-
-3. **Configure as variáveis de ambiente**
-```bash
-cp env.example .env
-```
-
-Edite o arquivo `.env` com suas configurações:
-```env
-# Configurações do Banco Oracle
-DB_HOST=localhost
-DB_PORT=1521
-DB_SERVICE=XE
-DB_USERNAME=your_username
-DB_PASSWORD=your_password
-
-# Configurações da API DropSigner
-DROPSIGNER_API_KEY=your_api_key_here
-DROPSIGNER_BASE_URL=https://signer-lac.azurewebsites.net
-
-# Configurações do Job
-JOB_INTERVAL_MINUTES=2
-
-# Configurações do Servidor
-PORT=3000
-NODE_ENV=development
-```
-
-## 🏃‍♂️ Execução
-
-### Desenvolvimento
-```bash
-npm run dev
-```
-
-### Produção
-```bash
-npm run build
-npm start
-```
-
-## 📊 Estrutura do Banco
-
-A aplicação trabalha com a tabela `SLO_ASSINATURAS_DROPSIGNER`:
-
-```sql
-CREATE TABLE SLO_ASSINATURAS_DROPSIGNER (
-    ID NUMBER PRIMARY KEY,
-    SLO_CEROR_ID NUMBER NOT NULL,
-    DATA_INCLUSAO DATE DEFAULT SYSDATE NOT NULL,
-    CEROR_ARQUIVO BLOB,
-    NOME_ASSINANTE VARCHAR2(150),
-    IDENTIFICADOR VARCHAR2(20),
-    EMAIL_ASSINANTE VARCHAR2(150),
-    METODO VARCHAR2(20),
-    PROCESSADO CHAR(1) DEFAULT 'N' CHECK (PROCESSADO IN ('S', 'N')),
-    UPLOAD_ID VARCHAR2(50),
-    DOCUMENT_ID VARCHAR2(50)
-);
-```
-
-## 🔄 Fluxo de Processamento
-
-1. **Consulta**: Busca registros com `PROCESSADO = 'N'` e `METODO = 'ASSINAR'`
-2. **Upload**: Converte BLOB para base64 e envia para `/api/uploads/bytes`
-3. **Atualização**: Salva o `UPLOAD_ID` retornado
-4. **Criação do Documento**: Chama `/api/documents` com dados do assinante
-5. **Finalização**: Salva o `DOCUMENT_ID` e marca como `PROCESSADO = 'S'`
-
-## 🌐 API Endpoints
-
-### Health Check
-```
-GET /health
-```
-
-### Executar Job Manualmente
-```
-POST /job/execute
-```
-
-### Status do Job
-```
-GET /job/status
-```
-
-### Documentação Swagger
-```
-GET /docs
-```
-
-## 📁 Estrutura do Projeto
+## Estrutura de Camadas
 
 ```
-src/
-├── config/
-│   └── database.ts          # Configuração do Sequelize
-├── models/
-│   └── Assinatura.ts        # Modelo da tabela
-├── services/
-│   ├── dropSignerService.ts # Integração com API DropSigner
-│   └── jobService.ts        # Lógica do job
-├── types/
-│   └── dropSigner.ts        # Tipos TypeScript
-└── index.ts                 # Aplicação principal
+src/signer/
+├── api/                   # Camada de API
+│   └── v1/
+│       ├── dto/          # Data Transfer Objects
+│       └── rest/         # Controllers REST
+├── domain/               # Camada de Domínio
+│   ├── model/            # Modelos de domínio
+│   └── service/          # Serviços de domínio
+└── infrastructure/       # Camada de Infraestrutura
+    ├── entity/           # Entidades (Sequelize)
+    ├── repository/       # Repositórios
+    ├── service/          # Implementações de serviços externos
+    └── container/        # Container de dependências
 ```
 
-## 🔧 Scripts Disponíveis
+## Camadas
 
-- `npm run dev`: Executa em modo desenvolvimento com hot reload
-- `npm run build`: Compila o TypeScript
-- `npm start`: Executa em produção
-- `npm test`: Executa testes
-- `npm run lint`: Verifica código
-- `npm run lint:fix`: Corrige problemas de linting
+### 1. API Layer (`api/`)
+Responsável pela exposição da API REST e definição dos contratos de entrada/saída.
 
-## 📝 Logs
+- **DTOs**: Definem a estrutura dos dados de entrada e saída da API
+- **Controllers**: Gerenciam as requisições HTTP e delegam para os serviços de domínio
 
-A aplicação gera logs detalhados com emojis para facilitar o monitoramento:
+### 2. Domain Layer (`domain/`)
+Contém a lógica de negócio e as regras do domínio.
 
-- 🚀 Requisições HTTP
-- ✅ Sucessos
-- ❌ Erros
-- 🔄 Processamento
-- ⏰ Agendamento
-- 📤 Uploads
-- 📄 Criação de documentos
+- **Models**: Representam as entidades de negócio com suas regras e comportamentos
+- **Services**: Implementam a lógica de negócio e orquestram as operações
 
-## 🚨 Tratamento de Erros
+### 3. Infrastructure Layer (`infrastructure/`)
+Responsável pela implementação técnica e integração com sistemas externos.
 
-- **Erro de Conexão**: Falha na inicialização
-- **Erro de Upload**: Continua com próximo item
-- **Erro de Criação**: Marca como processado para evitar loop
-- **Logs Detalhados**: Todos os erros são logados
+- **Entities**: Modelos Sequelize para persistência
+- **Repositories**: Abstração do acesso a dados
+- **Services**: Implementações de serviços externos (DropSigner API)
+- **Container**: Gerenciamento de dependências
 
-## 🔒 Segurança
+## Princípios Aplicados
 
-- Variáveis de ambiente para credenciais
-- Timeout nas requisições HTTP
-- Validação de dados obrigatórios
-- Graceful shutdown
+### Inversão de Dependência
+- As camadas superiores (API, Domain) dependem de abstrações
+- As implementações concretas estão na camada de infraestrutura
 
-## 📈 Monitoramento
+### Separação de Responsabilidades
+- Cada camada tem uma responsabilidade específica
+- A comunicação entre camadas é feita através de interfaces
 
-- Health check endpoint
-- Status do job em tempo real
-- Logs estruturados
-- Métricas de uptime
+### Clean Architecture
+- O domínio é independente de frameworks e tecnologias
+- As regras de negócio estão isoladas da infraestrutura
 
-## 🤝 Contribuição
+## Fluxo de Dados
 
-1. Fork o projeto
-2. Crie uma branch para sua feature
-3. Commit suas mudanças
-4. Push para a branch
-5. Abra um Pull Request
+```
+API Request → Controller → Service → Repository → Entity → Database
+     ↑                                                      ↓
+API Response ← Controller ← Service ← Repository ← Entity ← Database
+```
 
-## 📄 Licença
+## Benefícios
 
-MIT License
+1. **Testabilidade**: Cada camada pode ser testada independentemente
+2. **Manutenibilidade**: Mudanças em uma camada não afetam outras
+3. **Escalabilidade**: Fácil adição de novas funcionalidades
+4. **Flexibilidade**: Possibilidade de trocar implementações sem afetar o domínio
+
+## Uso
+
+```typescript
+// Obtendo instâncias através do container
+import { DependencyContainer } from './signer/infrastructure/container/DependencyContainer';
+
+const container = DependencyContainer.getInstance();
+const jobService = container.getJobService();
+const jobController = container.getJobController();
+``` 
