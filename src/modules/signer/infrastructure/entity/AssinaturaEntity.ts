@@ -1,4 +1,4 @@
-import { Model, DataTypes, Sequelize } from 'sequelize';
+import { DataTypes, Model, Sequelize } from 'sequelize';
 import sequelize from '../../../config/database';
 import { AssinaturaDomain, AssinaturaCreationDomain } from '../../domain/model/Assinatura';
 
