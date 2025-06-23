@@ -30,8 +30,8 @@ export class HealthController {
   }
 
   private async getHealth(
-    request: FastifyRequest,
-    reply: FastifyReply
+    _request: FastifyRequest,
+    _reply: FastifyReply
   ): Promise<HealthResponseDto> {
     const healthLogger = this.logger.child({ endpoint: '/health' });
     healthLogger.debug('Health check solicitado');

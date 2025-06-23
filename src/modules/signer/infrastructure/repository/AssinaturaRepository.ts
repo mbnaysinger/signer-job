@@ -1,6 +1,4 @@
-import { WhereOptions } from 'sequelize';
 import AssinaturaEntity from '../entity/AssinaturaEntity';
-import { AssinaturaDomain, AssinaturaCreationDomain } from '../../domain/model/Assinatura';
 import { AssinaturaModel } from '../../domain/model/Assinatura';
 
 export interface IAssinaturaRepository {

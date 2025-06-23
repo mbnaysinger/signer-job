@@ -82,8 +82,8 @@ export class JobController {
   }
 
   private async getJobStatus(
-    request: FastifyRequest,
-    reply: FastifyReply
+    _request: FastifyRequest,
+    _reply: FastifyReply
   ): Promise<JobStatusResponseDto> {
     const statusLogger = this.logger.child({ endpoint: '/job/status' });
     statusLogger.debug('Status do job solicitado');
