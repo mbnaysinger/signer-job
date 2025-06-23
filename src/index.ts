@@ -3,9 +3,12 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import dotenv from 'dotenv';
 import { testConnection } from './config/database';
+import { createServiceLogger, globalLogger } from './config/logger';
 import jobService from './services/jobService';
 
 dotenv.config();
+
+const appLogger = createServiceLogger('fastify-app');
 
 const fastify = Fastify({
   logger: {
@@ -40,8 +43,14 @@ const swaggerUiOptions = {
 
 // Registra plugins
 async function registerPlugins() {
-  await fastify.register(swagger, swaggerOptions);
-  await fastify.register(swaggerUi, swaggerUiOptions);
+  try {
+    await fastify.register(swagger, swaggerOptions);
+    await fastify.register(swaggerUi, swaggerUiOptions);
+    appLogger.info('Plugins registrados com sucesso');
+  } catch (error) {
+    appLogger.error('Erro ao registrar plugins', error);
+    throw error;
+  }
 }
 
 // Rotas da API
@@ -63,6 +72,9 @@ async function registerRoutes() {
       }
     }
   }, async (request, reply) => {
+    const healthLogger = appLogger.child({ endpoint: '/health' });
+    healthLogger.debug('Health check solicitado');
+    
     return {
       status: 'OK',
       timestamp: new Date().toISOString(),
@@ -87,14 +99,20 @@ async function registerRoutes() {
       }
     }
   }, async (request, reply) => {
+    const jobLogger = appLogger.child({ endpoint: '/job/execute' });
+    
     try {
+      jobLogger.info('Execução manual do job solicitada');
       await jobService.executarJob();
+      
+      jobLogger.info('Job executado com sucesso via API');
       return {
         success: true,
         message: 'Job executado com sucesso',
         timestamp: new Date().toISOString()
       };
     } catch (error) {
+      jobLogger.error('Erro ao executar job via API', error);
       reply.status(500);
       return {
         success: false,
@@ -121,6 +139,9 @@ async function registerRoutes() {
       }
     }
   }, async (request, reply) => {
+    const statusLogger = appLogger.child({ endpoint: '/job/status' });
+    statusLogger.debug('Status do job solicitado');
+    
     return {
       active: true,
       lastExecution: new Date().toISOString(),
@@ -132,8 +153,11 @@ async function registerRoutes() {
 // Função principal
 async function start() {
   try {
+    appLogger.info('Iniciando aplicação Signer Job');
+    
     // Testa conexão com banco
     await testConnection();
+    appLogger.info('Conexão com banco de dados estabelecida');
 
     // Registra plugins e rotas
     await registerPlugins();
@@ -143,27 +167,30 @@ async function start() {
     const port = parseInt(process.env.PORT || '3000');
     await fastify.listen({ port, host: '0.0.0.0' });
 
-    console.log(`🚀 Servidor iniciado na porta ${port}`);
-    console.log(`📚 Documentação disponível em: http://localhost:${port}/docs`);
+    appLogger.info('Servidor iniciado com sucesso', {
+      port,
+      environment: process.env.NODE_ENV || 'development',
+      docsUrl: `http://localhost:${port}/docs`
+    });
 
     // Inicia o job agendado
     jobService.iniciarJobAgendado();
 
   } catch (error) {
-    console.error('❌ Erro ao iniciar aplicação:', error);
+    appLogger.error('Erro crítico ao iniciar aplicação', error);
     process.exit(1);
   }
 }
 
 // Tratamento de sinais para graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n🛑 Recebido SIGINT, encerrando aplicação...');
+  appLogger.info('Recebido SIGINT, encerrando aplicação');
   await fastify.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.log('\n🛑 Recebido SIGTERM, encerrando aplicação...');
+  appLogger.info('Recebido SIGTERM, encerrando aplicação');
   await fastify.close();
   process.exit(0);
 });

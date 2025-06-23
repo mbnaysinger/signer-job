@@ -13,6 +13,9 @@ interface AssinaturaAttributes {
   PROCESSADO: 'S' | 'N';
   UPLOAD_ID: string | null;
   DOCUMENT_ID: string | null;
+  UPLOAD_DATA: Date | null;
+  DOCUMENT_DATA: Date | null;
+  ASSINADO_PORTAL: 'S' | 'N';
 }
 
 interface AssinaturaCreationAttributes extends Omit<AssinaturaAttributes, 'ID' | 'DATA_INCLUSAO'> {
@@ -31,6 +34,9 @@ class Assinatura extends Model<AssinaturaAttributes, AssinaturaCreationAttribute
   public PROCESSADO!: 'S' | 'N';
   public UPLOAD_ID!: string | null;
   public DOCUMENT_ID!: string | null;
+  public UPLOAD_DATA!: Date | null;
+  public DOCUMENT_DATA!: Date | null;
+  public ASSINADO_PORTAL!: 'S' | 'N';
 }
 
 Assinatura.init(
@@ -88,6 +94,21 @@ Assinatura.init(
     DOCUMENT_ID: {
       type: DataTypes.STRING(50),
       field: 'DOCUMENT_ID'
+    },
+    UPLOAD_DATA: {
+      type: DataTypes.DATE,
+      field: 'UPLOAD_DATA'
+    },
+    DOCUMENT_DATA: {
+      type: DataTypes.DATE,
+      field: 'DOCUMENT_DATA'
+    },
+    ASSINADO_PORTAL: {
+      type: DataTypes.CHAR(1),
+      validate: {
+        isIn: [['S', 'N']]
+      },
+      field: 'ASSINADO_PORTAL'
     }
   },
   {

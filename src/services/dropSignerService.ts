@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import dotenv from 'dotenv';
+import { createServiceLogger } from '../config/logger';
 import {
   UploadBytesRequest,
   UploadBytesResponse,
@@ -12,9 +13,12 @@ dotenv.config();
 export class DropSignerService {
   private api: AxiosInstance;
   private apiKey: string;
+  private serviceLogger: any;
 
   constructor() {
     this.apiKey = process.env.DROPSIGNER_API_KEY || '';
+    this.serviceLogger = createServiceLogger('dropsigner-service');
+    
     this.api = axios.create({
       baseURL: process.env.DROPSIGNER_BASE_URL || 'https://signer-lac.azurewebsites.net',
       headers: {
@@ -27,22 +31,39 @@ export class DropSignerService {
     // Interceptor para logs
     this.api.interceptors.request.use(
       (config) => {
-        console.log(`🚀 ${config.method?.toUpperCase()} ${config.url}`);
+        this.serviceLogger.debug('Requisição HTTP iniciada', {
+          method: config.method?.toUpperCase(),
+          url: config.url,
+          baseURL: config.baseURL
+        });
         return config;
       },
       (error) => {
-        console.error('❌ Erro na requisição:', error.message);
+        this.serviceLogger.error('Erro na requisição HTTP', error, {
+          method: error.config?.method?.toUpperCase(),
+          url: error.config?.url
+        });
         return Promise.reject(error);
       }
     );
 
     this.api.interceptors.response.use(
       (response) => {
-        console.log(`✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`);
+        this.serviceLogger.debug('Resposta HTTP recebida', {
+          status: response.status,
+          method: response.config.method?.toUpperCase(),
+          url: response.config.url,
+          responseTime: response.headers['x-response-time']
+        });
         return response;
       },
       (error) => {
-        console.error(`❌ Erro na resposta: ${error.response?.status} ${error.config?.method?.toUpperCase()} ${error.config?.url}`);
+        this.serviceLogger.error('Erro na resposta HTTP', error, {
+          status: error.response?.status,
+          method: error.config?.method?.toUpperCase(),
+          url: error.config?.url,
+          responseData: error.response?.data
+        });
         return Promise.reject(error);
       }
     );
@@ -52,16 +73,31 @@ export class DropSignerService {
    * Faz upload do arquivo BLOB como base64
    */
   async uploadBytes(fileBuffer: Buffer): Promise<UploadBytesResponse> {
+    const operationLogger = this.serviceLogger.child({ operation: 'uploadBytes' });
+    
     try {
+      operationLogger.info('Iniciando upload de arquivo', {
+        fileSize: fileBuffer.length,
+        fileSizeKB: Math.round(fileBuffer.length / 1024)
+      });
+
       const base64String = fileBuffer.toString('base64');
       const requestBody: UploadBytesRequest = {
         bytes: base64String
       };
 
       const response = await this.api.post<UploadBytesResponse>('/api/uploads/bytes', requestBody);
+      
+      operationLogger.info('Upload de arquivo concluído com sucesso', {
+        uploadId: response.data.id,
+        fileSize: fileBuffer.length
+      });
+      
       return response.data;
     } catch (error) {
-      console.error('❌ Erro ao fazer upload do arquivo:', error);
+      operationLogger.error('Erro ao fazer upload do arquivo', error, {
+        fileSize: fileBuffer.length
+      });
       throw new Error(`Falha no upload do arquivo: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
     }
   }
@@ -76,7 +112,20 @@ export class DropSignerService {
     identificador: string,
     emailAssinante: string
   ): Promise<CreateDocumentResponse> {
+    const operationLogger = this.serviceLogger.child({ 
+      operation: 'createDocument',
+      uploadId,
+      sloCerorId
+    });
+    
     try {
+      operationLogger.info('Iniciando criação de documento', {
+        sloCerorId,
+        nomeAssinante,
+        emailAssinante,
+        identificador
+      });
+
       const requestBody: CreateDocumentRequest = {
         files: [
           {
@@ -105,14 +154,76 @@ export class DropSignerService {
       if (response.data && response.data.length > 0) {
         const firstResponse = response.data[0];
         if (firstResponse) {
+          operationLogger.info('Documento criado com sucesso', {
+            documentId: firstResponse.documentId,
+            uploadId,
+            sloCerorId
+          });
           return firstResponse;
         }
       }
       
       throw new Error('Resposta da API não contém dados válidos');
     } catch (error) {
-      console.error('❌ Erro ao criar documento:', error);
+      operationLogger.error('Erro ao criar documento', error, {
+        uploadId,
+        sloCerorId,
+        nomeAssinante
+      });
       throw new Error(`Falha na criação do documento: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+    }
+  }
+
+  /**
+   * Adiciona contraassinatura ao documento existente
+   */
+  async addCounterSignature(
+    documentId: string,
+    nomeAssinante: string,
+    identificador: string,
+    emailAssinante: string
+  ): Promise<boolean> {
+    const operationLogger = this.serviceLogger.child({ 
+      operation: 'addCounterSignature',
+      documentId
+    });
+    
+    try {
+      operationLogger.info('Iniciando adição de contraassinatura', {
+        documentId,
+        nomeAssinante,
+        emailAssinante,
+        identificador
+      });
+
+      const requestBody = {
+        addedFlowActions: [
+          {
+            type: 'Signer',
+            step: 2,
+            user: {
+              name: nomeAssinante,
+              identifier: identificador,
+              email: emailAssinante
+            }
+          }
+        ]
+      };
+
+      const response = await this.api.post(`/api/documents/${documentId}/flow`, requestBody);
+      
+      operationLogger.info('Contraassinatura adicionada com sucesso', {
+        documentId,
+        nomeAssinante
+      });
+      
+      return true;
+    } catch (error) {
+      operationLogger.error('Erro ao adicionar contraassinatura', error, {
+        documentId,
+        nomeAssinante
+      });
+      throw new Error(`Falha na adição da contraassinatura: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
     }
   }
 }
